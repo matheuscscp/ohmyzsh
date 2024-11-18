@@ -1,0 +1,59 @@
+name: Autorebase from ohmyzsh/ohmyzsh
+
+on:
+  schedule: # 8am UTC every day
+  - cron: 0 8 * * *
+  workflow_dispatch: # for triggering manually on the UI
+
+jobs:
+  auto-rebase:
+    runs-on: ubuntu-latest
+    environment:
+      name: autorebase
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.PAT_TOKEN }}
+    - run: git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+    - run: git config --global user.name "github-actions[bot]"
+    - run: git remote add upstream https://github.com/ohmyzsh/ohmyzsh.git
+    - run: git fetch upstream
+    - name: Check if rebase is needed
+      id: check-rebase
+      run: |
+        upstream_sha=$(git rev-parse upstream/master)
+        echo upstream_sha=$upstream_sha >> $GITHUB_OUTPUT
+        if [ "$(git merge-base master upstream/master)" == "$upstream_sha" ]; then
+          echo "No rebase needed"
+          echo needs_rebase=false >> $GITHUB_OUTPUT
+        else
+          echo "Rebase needed"
+          echo needs_rebase=true >> $GITHUB_OUTPUT
+        fi
+    - if: steps.check-rebase.outputs.needs_rebase == 'true'
+      name: Rebase
+      id: rebase
+      run: |
+        if git rebase upstream/master; then
+          echo "Rebase successful"
+          echo rebase_status=success >> $GITHUB_OUTPUT
+        else
+          echo "Rebase failed"
+          echo rebase_status=failed >> $GITHUB_OUTPUT
+        fi
+    - if: steps.check-rebase.outputs.needs_rebase == 'true' && steps.rebase.outputs.rebase_status == 'success'
+      run: git push --force-with-lease
+    - if: steps.check-rebase.outputs.needs_rebase == 'true' && steps.rebase.outputs.rebase_status == 'failed'
+      run: git checkout -b rebase-conflict
+    - if: steps.check-rebase.outputs.needs_rebase == 'true' && steps.rebase.outputs.rebase_status == 'failed'
+      run: git add .
+    - if: steps.check-rebase.outputs.needs_rebase == 'true' && steps.rebase.outputs.rebase_status == 'failed'
+      run: git commit -m "Rebase conflict"
+    - if: steps.check-rebase.outputs.needs_rebase == 'true' && steps.rebase.outputs.rebase_status == 'failed'
+      run: git push origin rebase-conflict --force
+    - if: steps.check-rebase.outputs.needs_rebase == 'true' && steps.rebase.outputs.rebase_status == 'failed'
+      id: conflict_sha
+      run: echo conflict_sha=$(git rev-parse HEAD) >> $GITHUB_OUTPUT
+    - if: steps.check-rebase.outputs.needs_rebase == 'true' && steps.rebase.outputs.rebase_status == 'failed'
+      run: exit 1
